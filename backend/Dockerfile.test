@@ -22,6 +22,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY repo_prep_agent.py .
 COPY analysis_agent.py .
 COPY healing_agent.py .
+COPY git_agent.py .
 COPY language_detector.py .
 COPY failure_classifier.py .
 COPY failure_dataset.csv .
@@ -40,3 +41,4 @@ RUN python --version && \
 ENV PYTHONUNBUFFERED=1
 
 ENTRYPOINT ["python", "worker_entrypoint.py"]
+COPY worker_entrypoint.py /app/worker_entrypoint.py
