@@ -56,9 +56,10 @@ const handler = NextAuth({
     }),
 
     GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
+  clientId: process.env.GOOGLE_CLIENT_ID!,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+  allowDangerousEmailAccountLinking: true,
+}),
   ],
 
   secret: process.env.NEXTAUTH_SECRET,
@@ -68,8 +69,8 @@ const handler = NextAuth({
   },
 
   pages: {
-    signIn: "/auth",
-  },
+  signIn: "/login",
+},
 });
 
 export { handler as GET, handler as POST };

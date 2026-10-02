@@ -1,8 +1,27 @@
 @import "tailwindcss";
 
 :root {
-  --background: #080808;
-  --foreground: #ffffff;
+  --background: #05070a;
+  --background-soft: #080b10;
+  --surface: #0b0f15;
+  --surface-elevated: #10151d;
+  --foreground: #f5f7fa;
+  --muted: #8b95a5;
+  --muted-soft: #5d6674;
+
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  --accent: #38bdf8;
+  --accent-strong: #06b6d4;
+  --violet: #8b5cf6;
+
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+
+  --font-sans: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  --font-mono: var(--font-geist-mono), "JetBrains Mono", monospace;
 }
 
 * {
@@ -11,34 +30,230 @@
 
 html {
   scroll-behavior: smooth;
+  background: var(--background);
 }
 
 body {
   margin: 0;
-  background: var(--background);
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at 15% 10%,
+      rgba(56, 189, 248, 0.07),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 85% 20%,
+      rgba(139, 92, 246, 0.06),
+      transparent 26%
+    ),
+    var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
-::selection {
-  background: white;
-  color: black;
+/* Subtle technical grid */
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, black, transparent 85%);
 }
+
+/* Selection */
+
+::selection {
+  background: rgba(56, 189, 248, 0.25);
+  color: #ffffff;
+}
+
+/* Scrollbar */
 
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #080808;
+  background: #05070a;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #333;
+  background: #252c36;
   border-radius: 999px;
 }
+
+::-webkit-scrollbar-thumb:hover {
+  background: #394452;
+}
+
+/* Links and buttons */
 
 button,
 a {
   -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* Technical text */
+
+.font-mono,
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+/* Glass surface */
+
+.acr-glass {
+  background: rgba(10, 14, 20, 0.72);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+/* Subtle glowing border */
+
+.acr-glow-border {
+  position: relative;
+}
+
+.acr-glow-border::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(
+    135deg,
+    rgba(56, 189, 248, 0.35),
+    transparent 35%,
+    transparent 65%,
+    rgba(139, 92, 246, 0.25)
+  );
+  opacity: 0.55;
+}
+
+/* Status indicators */
+
+.acr-status-online {
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.65);
+}
+
+.acr-status-warning {
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.65);
+}
+
+.acr-status-error {
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.65);
+}
+
+/* Pipeline pulse */
+
+@keyframes acr-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.95);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.acr-pulse {
+  animation: acr-pulse 2s ease-in-out infinite;
+}
+
+/* Slow background movement */
+
+@keyframes acr-grid-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+
+  to {
+    transform: translate3d(48px, 48px, 0);
+  }
+}
+
+.acr-grid-animation {
+  animation: acr-grid-drift 18s linear infinite;
+}
+
+/* Fade/slide entrance */
+
+@keyframes acr-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.acr-fade-up {
+  animation: acr-fade-up 0.6s ease-out both;
+}
+
+/* Terminal cursor */
+
+@keyframes acr-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.acr-terminal-cursor {
+  animation: acr-blink 1s step-end infinite;
+}
+
+/* Reduced motion accessibility */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Mobile */
+
+@media (max-width: 640px) {
+  body::before {
+    background-size: 32px 32px;
+  }
 }
