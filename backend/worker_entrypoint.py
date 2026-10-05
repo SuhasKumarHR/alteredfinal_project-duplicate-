@@ -27,10 +27,16 @@ def main():
     leader_name = os.environ.get("LEADER_NAME", "").strip()
 
     if not repo_url or not team_name or not leader_name:
-        _fail("Missing required env vars: REPO_URL, TEAM_NAME, LEADER_NAME")
+        _fail(
+            "Missing required env vars: "
+            "REPO_URL, TEAM_NAME, LEADER_NAME"
+        )
 
     if not os.getenv("GEMINI_API_KEY") or not os.getenv("GITHUB_TOKEN"):
-        _fail("Missing API keys: GEMINI_API_KEY or GITHUB_TOKEN not set.")
+        _fail(
+            "Missing API keys: "
+            "GEMINI_API_KEY or GITHUB_TOKEN not set."
+        )
 
     start_time = time.time()
 
@@ -94,7 +100,7 @@ def main():
         # -----------------------------------------------------
         # ANALYSIS PASSED
         # -----------------------------------------------------
-        if analysis_result["status"] == "PASSED":
+        if analysis_result["status"] in ("PASSED", "SUCCESS"):
             print(
                 "[SUCCESS] Analysis passed. "
                 "No healing required."

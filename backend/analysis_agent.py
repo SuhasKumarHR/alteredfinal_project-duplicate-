@@ -1,1121 +1,1318 @@
 import subprocess
 import shutil
+import json
+import os
 from pathlib import Path
 
 
 class AnalysisAgent:
+    """
+    Analyzes a detected project and validates whether it can be built,
+    compiled, or otherwise checked successfully.
+
+    Supported:
+        - JavaScript
+        - TypeScript
+        - Next.js
+        - React/Vite-style npm projects
+        - Python
+        - Java/Maven/Gradle
+        - Go
+        - Rust
+        - PHP
+        - C/C++
+        - C#
+    """
 
     def __init__(self, repo_path, environment):
-        self.repo_path = Path(repo_path)
-        self.environment = environment
+        self.repo_path = Path(repo_path).resolve()
+        self.environment = environment or {}
 
-    # =========================================================
+    # ============================================================
     # MAIN EXECUTION
-    # =========================================================
+    # ============================================================
 
     def execute(self):
-
         print("--- [AGENT START]: AnalysisAgent ---")
 
-        print(
-            f"[LOG] Analyzing environment: "
-            f"{self.environment}"
-        )
+        language_id = self._detect_language_id()
+        project_path = self._resolve_project_path()
+        framework = self._get_framework()
+        package_manager = self._get_package_manager()
 
-        # -----------------------------------------------------
-        # FORMAL JAVASCRIPT / TYPESCRIPT PROJECT
-        # -----------------------------------------------------
+        print(f"[LOG] Language: {language_id}")
+        print(f"[LOG] Project path: {project_path}")
 
-        if (
-            (
-                "javascript" in self.environment
-                or "typescript" in self.environment
-            )
-            and "simple" not in self.environment
-        ):
+        if framework:
+            print(f"[LOG] Framework: {framework}")
 
-            result = self._check_js_build()
+        if package_manager:
+            print(f"[LOG] Package manager: {package_manager}")
 
-        # -----------------------------------------------------
-        # FORMAL PYTHON PROJECT
-        # -----------------------------------------------------
+        try:
+            if language_id in ("javascript", "typescript"):
+                result = self._check_js_build(
+                    project_path,
+                    language_id,
+                    package_manager,
+                )
 
-        elif self.environment == "python":
+            elif language_id == "python":
+                result = self._check_python_compilation(project_path)
 
-            result = (
-                self._check_python_compilation()
-            )
+            elif language_id == "java":
+                result = self._check_java_build(project_path)
 
-        # -----------------------------------------------------
-        # JAVA MAVEN / GRADLE
-        # -----------------------------------------------------
+            elif language_id == "go":
+                result = self._check_go(project_path)
 
-        elif self.environment in (
-            "java (maven)",
-            "java (gradle)"
-        ):
+            elif language_id == "rust":
+                result = self._check_rust(project_path)
 
-            result = self._check_java_build()
+            elif language_id == "php":
+                result = self._check_php(project_path)
 
-        # -----------------------------------------------------
-        # SIMPLE PYTHON
-        # -----------------------------------------------------
+            elif language_id in ("c", "cpp"):
+                result = self._check_c_cpp(project_path, language_id)
 
-        elif self.environment == "python_simple":
+            elif language_id == "csharp":
+                result = self._check_csharp(project_path)
 
-            result = self._check_simple_python()
+            else:
+                result = self._check_unknown(project_path)
 
-        # -----------------------------------------------------
-        # SIMPLE JAVASCRIPT
-        # -----------------------------------------------------
-
-        elif self.environment == "javascript_simple":
-
-            result = self._check_simple_js()
-
-        # -----------------------------------------------------
-        # SIMPLE TYPESCRIPT
-        # -----------------------------------------------------
-
-        elif self.environment == "typescript_simple":
-
-            result = self._check_simple_ts()
-
-        # -----------------------------------------------------
-        # SIMPLE JAVA
-        # -----------------------------------------------------
-
-        elif self.environment == "java":
-
-            result = self._check_simple_java()
-
-        # -----------------------------------------------------
-        # UNKNOWN
-        # -----------------------------------------------------
-
-        else:
-
+        except Exception as exc:
             result = {
-                "status": "FAILED",
-                "error": (
-                    "Unknown or unsupported environment: "
-                    f"{self.environment}"
-                ),
-                "stdout": "",
-                "stderr": ""
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "analysis_exception",
+                "error": str(exc),
+                "language": language_id,
+                "project_path": str(project_path),
             }
 
-        print("--- [AGENT COMPLETED] ---")
-
+        print("--- [AGENT END]: AnalysisAgent ---")
         return result
 
-    # =========================================================
-    # FIND NODE PROJECT
-    # =========================================================
+    # ============================================================
+    # LANGUAGE DETECTION
+    # ============================================================
 
-    def _find_node_project(self):
+    def _detect_language_id(self):
+        value = self.environment.get("language_id")
 
-        # -----------------------------------------------------
-        # Check root package.json first
-        # -----------------------------------------------------
+        if value:
+            return self._normalize_language(value)
 
-        root_package = (
-            self.repo_path / "package.json"
+        value = self.environment.get("language")
+
+        if value:
+            return self._normalize_language(value)
+
+        project_path = self._resolve_project_path()
+
+        if list(project_path.rglob("*.py")):
+            return "python"
+
+        if list(project_path.rglob("*.ts")) or list(project_path.rglob("*.tsx")):
+            return "typescript"
+
+        if list(project_path.rglob("*.js")) or list(project_path.rglob("*.jsx")):
+            return "javascript"
+
+        if list(project_path.rglob("*.java")):
+            return "java"
+
+        if list(project_path.rglob("*.go")):
+            return "go"
+
+        if list(project_path.rglob("*.rs")):
+            return "rust"
+
+        if list(project_path.rglob("*.php")):
+            return "php"
+
+        if list(project_path.rglob("*.cs")):
+            return "csharp"
+
+        if list(project_path.rglob("*.cpp")) or list(project_path.rglob("*.cc")):
+            return "cpp"
+
+        if list(project_path.rglob("*.c")):
+            return "c"
+
+        return "unknown"
+
+    def _normalize_language(self, language):
+        value = str(language).strip().lower()
+
+        aliases = {
+            "ts": "typescript",
+            "typescript": "typescript",
+            "tsx": "typescript",
+
+            "js": "javascript",
+            "javascript": "javascript",
+            "jsx": "javascript",
+
+            "py": "python",
+            "python": "python",
+
+            "java": "java",
+
+            "golang": "go",
+            "go": "go",
+
+            "rs": "rust",
+            "rust": "rust",
+
+            "php": "php",
+
+            "c++": "cpp",
+            "cpp": "cpp",
+            "cxx": "cpp",
+
+            "c": "c",
+
+            "c#": "csharp",
+            "cs": "csharp",
+            "csharp": "csharp",
+        }
+
+        return aliases.get(value, value)
+
+    # ============================================================
+    # PROJECT PATH
+    # ============================================================
+
+    def _resolve_project_path(self):
+        env_project_path = self.environment.get("project_path")
+
+        if env_project_path:
+            candidate = Path(env_project_path)
+
+            if candidate.exists():
+                return candidate.resolve()
+
+        relative_project_path = self.environment.get(
+            "relative_project_path"
         )
 
-        if root_package.exists():
+        if relative_project_path:
+            candidate = self.repo_path / relative_project_path
 
-            return self.repo_path
+            if candidate.exists():
+                return candidate.resolve()
 
-        # -----------------------------------------------------
-        # Search nested package.json files
-        # -----------------------------------------------------
+        package_candidates = []
 
-        candidates = []
-
-        for package_file in self.repo_path.rglob(
-            "package.json"
-        ):
-
-            if not package_file.is_file():
-                continue
-
+        for package_file in self.repo_path.rglob("package.json"):
             if "node_modules" in package_file.parts:
                 continue
 
-            if ".next" in package_file.parts:
-                continue
+            package_candidates.append(package_file.parent)
 
-            if "dist" in package_file.parts:
-                continue
-
-            if "build" in package_file.parts:
-                continue
-
-            candidates.append(
-                package_file.parent
-            )
-
-        if not candidates:
-            return None
-
-        # -----------------------------------------------------
-        # Prefer frontend
-        # -----------------------------------------------------
-
-        for candidate in candidates:
-
-            if candidate.name.lower() in (
+        if package_candidates:
+            preferred_names = (
                 "frontend",
                 "client",
                 "web",
-                "app"
-            ):
-
-                return candidate
-
-        # -----------------------------------------------------
-        # Otherwise use first project
-        # -----------------------------------------------------
-
-        return candidates[0]
-
-    # =========================================================
-    # FORMAL JAVASCRIPT / TYPESCRIPT PROJECT
-    # =========================================================
-
-    def _check_js_build(self):
-
-        print(
-            "[INFO] Running JavaScript/TypeScript "
-            "project build..."
-        )
-
-        project_root = (
-            self._find_node_project()
-        )
-
-        if project_root is None:
-
-            return {
-                "status": "FAILED",
-                "error": (
-                    "No package.json found "
-                    "in repository."
-                ),
-                "stdout": "",
-                "stderr": ""
-            }
-
-        print(
-            f"[INFO] Node project detected at: "
-            f"{project_root}"
-        )
-
-        # -----------------------------------------------------
-        # Install dependencies if needed
-        # -----------------------------------------------------
-
-        node_modules = (
-            project_root / "node_modules"
-        )
-
-        if not node_modules.exists():
-
-            print(
-                "[INFO] Installing Node.js dependencies..."
+                "app",
+                "website",
+                "ui",
             )
 
-            try:
+            for preferred in preferred_names:
+                for candidate in package_candidates:
+                    if candidate.name.lower() == preferred:
+                        return candidate.resolve()
 
-                install_process = subprocess.run(
-                    [
-                        "npm",
-                        "install"
-                    ],
-                    cwd=str(project_root),
-                    capture_output=True,
-                    text=True,
-                    timeout=180
+            return package_candidates[0].resolve()
+
+        return self.repo_path
+
+    # ============================================================
+    # FRAMEWORK
+    # ============================================================
+
+    def _get_framework(self):
+        framework = self.environment.get("framework")
+
+        if framework:
+            return str(framework)
+
+        project_path = self._resolve_project_path()
+        package_json = project_path / "package.json"
+
+        if not package_json.exists():
+            return ""
+
+        try:
+            data = json.loads(
+                package_json.read_text(
+                    encoding="utf-8",
+                    errors="ignore",
                 )
+            )
 
-                if install_process.returncode != 0:
+            dependencies = {}
 
-                    print(
-                        "[ERROR] npm install failed."
-                    )
+            dependencies.update(
+                data.get("dependencies", {}) or {}
+            )
 
-                    return {
-                        "status": "FAILED",
-                        "error": (
-                            "npm dependency installation "
-                            "failed."
-                        ),
-                        "stdout": (
-                            install_process.stdout
-                        ),
-                        "stderr": (
-                            install_process.stderr
-                        )
-                    }
+            dependencies.update(
+                data.get("devDependencies", {}) or {}
+            )
 
-                print(
-                    "[SUCCESS] npm install passed."
-                )
+            if "next" in dependencies:
+                return "Next.js"
 
-            except subprocess.TimeoutExpired:
+            if "react" in dependencies:
+                return "React"
 
-                return {
-                    "status": "FAILED",
-                    "error": (
-                        "npm install timed out."
-                    ),
-                    "stdout": "",
-                    "stderr": ""
-                }
+            if "vite" in dependencies:
+                return "Vite"
 
-            except Exception as e:
+            if "express" in dependencies:
+                return "Express"
 
-                return {
-                    "status": "FAILED",
-                    "error": str(e),
-                    "stdout": "",
-                    "stderr": str(e)
-                }
+        except Exception:
+            pass
 
-        # -----------------------------------------------------
-        # Determine package manager
-        # -----------------------------------------------------
+        return ""
 
-        if shutil.which("bun"):
+    # ============================================================
+    # PACKAGE MANAGER
+    # ============================================================
 
-            command = [
-                "bun",
-                "run",
-                "build"
-            ]
+    def _get_package_manager(self):
+        explicit = self.environment.get("package_manager")
 
-        else:
+        if explicit:
+            return str(explicit).lower()
 
-            command = [
-                "npm",
-                "run",
-                "build"
-            ]
+        project_path = self._resolve_project_path()
+
+        if (project_path / "package-lock.json").exists():
+            return "npm"
+
+        if (project_path / "pnpm-lock.yaml").exists():
+            return "pnpm"
+
+        if (project_path / "yarn.lock").exists():
+            return "yarn"
+
+        if (
+            (project_path / "bun.lock").exists()
+            or (project_path / "bun.lockb").exists()
+        ):
+            return "bun"
+
+        return "npm"
+
+    # ============================================================
+    # WINDOWS COMMAND RESOLUTION
+    # ============================================================
+
+    def _resolve_command(self, command):
+        """
+        Resolves executable names correctly on Windows.
+
+        PowerShell can execute:
+            npm
+
+        but subprocess.run(..., shell=False) may need:
+            npm.cmd
+        """
+
+        if not command:
+            return command
+
+        command = str(command)
+
+        # If an absolute path already exists, keep it.
+        if os.path.isabs(command):
+            if os.path.exists(command):
+                return command
+
+        # Windows command resolution.
+        if os.name == "nt":
+            windows_commands = {
+                "npm": "npm.cmd",
+                "npx": "npx.cmd",
+                "pnpm": "pnpm.cmd",
+                "yarn": "yarn.cmd",
+                "bun": "bun.exe",
+                "python": "python.exe",
+                "pip": "pip.exe",
+                "mvn": "mvn.cmd",
+                "gradle": "gradle.bat",
+                "cargo": "cargo.exe",
+                "rustc": "rustc.exe",
+                "go": "go.exe",
+                "php": "php.exe",
+                "dotnet": "dotnet.exe",
+                "gcc": "gcc.exe",
+                "g++": "g++.exe",
+                "cmake": "cmake.exe",
+                "javac": "javac.exe",
+                "java": "java.exe",
+            }
+
+            resolved_name = windows_commands.get(
+                command.lower(),
+                command,
+            )
+
+            found = shutil.which(resolved_name)
+
+            if found:
+                return found
+
+            # Try original command as final fallback.
+            found = shutil.which(command)
+
+            if found:
+                return found
+
+            return resolved_name
+
+        # Linux / macOS / Docker.
+        found = shutil.which(command)
+
+        if found:
+            return found
+
+        return command
+
+    def _prepare_command(self, command):
+        if not command:
+            return command
+
+        prepared = list(command)
+
+        prepared[0] = self._resolve_command(
+            prepared[0]
+        )
+
+        return prepared
+
+    # ============================================================
+    # COMMAND RUNNER
+    # ============================================================
+
+    def _run_command(
+        self,
+        command,
+        cwd,
+        timeout=900,
+    ):
+        command = self._prepare_command(command)
 
         print(
-            "[INFO] Running project build..."
+            f"[COMMAND] {' '.join(str(x) for x in command)}"
         )
 
         try:
-
             process = subprocess.run(
                 command,
-                cwd=str(project_root),
+                cwd=str(cwd),
                 capture_output=True,
                 text=True,
-                timeout=180
+                timeout=timeout,
+                shell=False,
             )
 
-            if process.returncode == 0:
+            stdout = process.stdout or ""
+            stderr = process.stderr or ""
 
-                print(
-                    "[SUCCESS] Project build passed."
+            if stdout.strip():
+                print(stdout.rstrip())
+
+            if stderr.strip():
+                print(stderr.rstrip())
+
+            return {
+                "success": process.returncode == 0,
+                "return_code": process.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "command": command,
+            }
+
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout or ""
+            stderr = exc.stderr or ""
+
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode(
+                    "utf-8",
+                    errors="replace",
                 )
 
-                return {
-                    "status": "PASSED",
-                    "stdout": process.stdout,
-                    "stderr": process.stderr
-                }
-
-            print(
-                "[ERROR] Project build failed."
-            )
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(
+                    "utf-8",
+                    errors="replace",
+                )
 
             return {
-                "status": "FAILED",
-                "error": (
-                    "Project build failed."
-                ),
-                "stdout": process.stdout,
-                "stderr": process.stderr
+                "success": False,
+                "return_code": None,
+                "stdout": stdout,
+                "stderr": stderr,
+                "command": command,
+                "timeout": True,
             }
 
-        except subprocess.TimeoutExpired:
-
+        except FileNotFoundError as exc:
             return {
-                "status": "FAILED",
-                "error": (
-                    "Project build timed out "
-                    "after 180 seconds."
-                ),
+                "success": False,
+                "return_code": None,
                 "stdout": "",
-                "stderr": ""
+                "stderr": str(exc),
+                "command": command,
+                "error": "command_not_found",
             }
 
-        except Exception as e:
-
+        except Exception as exc:
             return {
-                "status": "FAILED",
-                "error": str(e),
+                "success": False,
+                "return_code": None,
                 "stdout": "",
-                "stderr": str(e)
+                "stderr": str(exc),
+                "command": command,
+                "error": "command_execution_error",
             }
 
-    # =========================================================
-    # FORMAL PYTHON PROJECT
-    # =========================================================
+    # ============================================================
+    # JAVASCRIPT / TYPESCRIPT
+    # ============================================================
 
-    def _check_python_compilation(self):
+    def _check_js_build(
+        self,
+        project_path,
+        language_id,
+        package_manager,
+    ):
+        package_json = project_path / "package.json"
 
-        print(
-            "[INFO] Running Python compilation check..."
-        )
+        if not package_json.exists():
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "missing_package_json",
+                "error": "package.json was not found",
+                "project_path": str(project_path),
+            }
 
         try:
+            package_data = json.loads(
+                package_json.read_text(
+                    encoding="utf-8",
+                    errors="ignore",
+                )
+            )
+        except Exception as exc:
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "invalid_package_json",
+                "error": str(exc),
+                "project_path": str(project_path),
+            }
 
-            process = subprocess.run(
+        scripts = package_data.get(
+            "scripts",
+            {}
+        ) or {}
+
+        # --------------------------------------------------------
+        # INSTALL DEPENDENCIES
+        # --------------------------------------------------------
+
+        node_modules = project_path / "node_modules"
+
+        if not node_modules.exists():
+            install_command = self._get_install_command(
+                project_path,
+                package_manager,
+            )
+
+            install_result = self._run_command(
+                install_command,
+                project_path,
+                timeout=1200,
+            )
+
+            if not install_result["success"]:
+                return {
+                    "status": "FAILURE",
+                    "success": False,
+                    "error_type": "dependency_installation_error",
+                    "error": self._format_command_error(
+                        install_result
+                    ),
+                    "command": install_result["command"],
+                    "return_code": install_result["return_code"],
+                    "stdout": install_result["stdout"],
+                    "stderr": install_result["stderr"],
+                    "project_path": str(project_path),
+                }
+
+        # --------------------------------------------------------
+        # BUILD SCRIPT
+        # --------------------------------------------------------
+
+        build_script = None
+
+        if "build" in scripts:
+            build_script = "build"
+
+        elif "compile" in scripts:
+            build_script = "compile"
+
+        # --------------------------------------------------------
+        # RUN BUILD
+        # --------------------------------------------------------
+
+        if build_script:
+            build_result = self._run_command(
+                [
+                    package_manager,
+                    "run",
+                    build_script,
+                ],
+                project_path,
+                timeout=1800,
+            )
+
+            if not build_result["success"]:
+                return {
+                    "status": "FAILURE",
+                    "success": False,
+                    "error_type": "build_error",
+                    "error": self._format_command_error(
+                        build_result
+                    ),
+                    "command": build_result["command"],
+                    "return_code": build_result["return_code"],
+                    "stdout": build_result["stdout"],
+                    "stderr": build_result["stderr"],
+                    "project_path": str(project_path),
+                }
+
+        # --------------------------------------------------------
+        # TYPESCRIPT CHECK
+        # --------------------------------------------------------
+
+        if language_id == "typescript":
+
+            if "typecheck" in scripts:
+                typecheck_result = self._run_command(
+                    [
+                        package_manager,
+                        "run",
+                        "typecheck",
+                    ],
+                    project_path,
+                    timeout=1200,
+                )
+
+                if not typecheck_result["success"]:
+                    return {
+                        "status": "FAILURE",
+                        "success": False,
+                        "error_type": "typescript_error",
+                        "error": self._format_command_error(
+                            typecheck_result
+                        ),
+                        "command": typecheck_result["command"],
+                        "return_code": typecheck_result["return_code"],
+                        "stdout": typecheck_result["stdout"],
+                        "stderr": typecheck_result["stderr"],
+                        "project_path": str(project_path),
+                    }
+
+            elif not build_script:
+                tsc_path = shutil.which(
+                    "tsc"
+                )
+
+                if tsc_path:
+                    typecheck_result = self._run_command(
+                        [
+                            tsc_path,
+                            "--noEmit",
+                        ],
+                        project_path,
+                        timeout=1200,
+                    )
+
+                    if not typecheck_result["success"]:
+                        return {
+                            "status": "FAILURE",
+                            "success": False,
+                            "error_type": "typescript_error",
+                            "error": self._format_command_error(
+                                typecheck_result
+                            ),
+                            "command": typecheck_result["command"],
+                            "return_code": typecheck_result["return_code"],
+                            "stdout": typecheck_result["stdout"],
+                            "stderr": typecheck_result["stderr"],
+                            "project_path": str(project_path),
+                        }
+
+        return {
+            "status": "SUCCESS",
+            "success": True,
+            "error_type": None,
+            "error": None,
+            "language": language_id,
+            "framework": self._get_framework(),
+            "package_manager": package_manager,
+            "project_path": str(project_path),
+            "build_script": build_script,
+        }
+
+    def _get_install_command(
+        self,
+        project_path,
+        package_manager,
+    ):
+        if package_manager == "npm":
+            package_lock = (
+                project_path /
+                "package-lock.json"
+            )
+
+            if package_lock.exists():
+                return [
+                    "npm",
+                    "ci",
+                ]
+
+            return [
+                "npm",
+                "install",
+            ]
+
+        if package_manager == "pnpm":
+            return [
+                "pnpm",
+                "install",
+                "--frozen-lockfile",
+            ]
+
+        if package_manager == "yarn":
+            return [
+                "yarn",
+                "install",
+                "--frozen-lockfile",
+            ]
+
+        if package_manager == "bun":
+            return [
+                "bun",
+                "install",
+                "--frozen-lockfile",
+            ]
+
+        return [
+            "npm",
+            "install",
+        ]
+
+    def _format_command_error(self, result):
+        parts = []
+
+        return_code = result.get(
+            "return_code"
+        )
+
+        if return_code is not None:
+            parts.append(
+                f"Process exited with code {return_code}"
+            )
+
+        stderr = result.get(
+            "stderr",
+            ""
+        ).strip()
+
+        stdout = result.get(
+            "stdout",
+            ""
+        ).strip()
+
+        if stderr:
+            parts.append(
+                f"STDERR:\n{stderr[-8000:]}"
+            )
+
+        if stdout:
+            parts.append(
+                f"STDOUT:\n{stdout[-8000:]}"
+            )
+
+        if result.get("timeout"):
+            parts.append(
+                "Command timed out."
+            )
+
+        if result.get("error"):
+            parts.append(
+                f"Execution error: {result['error']}"
+            )
+
+        return "\n\n".join(parts)
+
+    # ============================================================
+    # PYTHON
+    # ============================================================
+
+    def _check_python_compilation(
+        self,
+        project_path,
+    ):
+        python_files = [
+            path
+            for path in project_path.rglob("*.py")
+            if "venv" not in path.parts
+            and ".venv" not in path.parts
+            and "__pycache__" not in path.parts
+        ]
+
+        if not python_files:
+            return {
+                "status": "SUCCESS",
+                "success": True,
+                "error_type": None,
+                "error": None,
+                "message": "No Python files found.",
+            }
+
+        for python_file in python_files:
+            result = self._run_command(
                 [
                     "python",
                     "-m",
-                    "compileall",
-                    "."
+                    "py_compile",
+                    str(python_file),
                 ],
-                cwd=str(self.repo_path),
-                capture_output=True,
-                text=True,
-                timeout=120
+                self.repo_path,
+                timeout=300,
             )
 
-            if process.returncode == 0:
-
-                print(
-                    "[SUCCESS] Python compilation passed."
-                )
-
+            if not result["success"]:
                 return {
-                    "status": "PASSED",
-                    "stdout": process.stdout,
-                    "stderr": process.stderr
-                }
-
-            print(
-                "[ERROR] Python compilation failed."
-            )
-
-            return {
-                "status": "FAILED",
-                "error": (
-                    "Python compilation failed."
-                ),
-                "stdout": process.stdout,
-                "stderr": process.stderr
-            }
-
-        except subprocess.TimeoutExpired:
-
-            return {
-                "status": "FAILED",
-                "error": (
-                    "Python compilation timed out."
-                ),
-                "stdout": "",
-                "stderr": ""
-            }
-
-        except Exception as e:
-
-            return {
-                "status": "FAILED",
-                "error": str(e),
-                "stdout": "",
-                "stderr": str(e)
-            }
-
-    # =========================================================
-    # SIMPLE PYTHON PROJECT
-    # =========================================================
-
-    def _check_simple_python(self):
-
-        import py_compile
-        import sys
-
-        print(
-            "[INFO] Running simple Python validation..."
-        )
-
-        python_files = []
-
-        for file_path in self.repo_path.rglob(
-            "*.py"
-        ):
-
-            if not file_path.is_file():
-                continue
-
-            parts = file_path.parts
-
-            if "node_modules" in parts:
-                continue
-
-            if "venv" in parts:
-                continue
-
-            if ".venv" in parts:
-                continue
-
-            if "__pycache__" in parts:
-                continue
-
-            python_files.append(
-                file_path
-            )
-
-        if not python_files:
-
-            return {
-                "status": "FAILED",
-                "error": "No Python files found.",
-                "stdout": "",
-                "stderr": ""
-            }
-
-        print(
-            f"[INFO] Found {len(python_files)} "
-            f"Python file(s)."
-        )
-
-        # -----------------------------------------------------
-        # Syntax
-        # -----------------------------------------------------
-
-        print(
-            "[INFO] Checking Python syntax..."
-        )
-
-        for file_path in python_files:
-
-            try:
-
-                py_compile.compile(
-                    str(file_path),
-                    doraise=True
-                )
-
-            except py_compile.PyCompileError as e:
-
-                print(
-                    f"[ERROR] Syntax error detected: "
-                    f"{file_path}"
-                )
-
-                return {
-                    "status": "FAILED",
-                    "error": (
-                        "Python syntax error detected."
+                    "status": "FAILURE",
+                    "success": False,
+                    "error_type": "python_compilation_error",
+                    "error": self._format_command_error(
+                        result
                     ),
-                    "stdout": "",
-                    "stderr": str(e)
+                    "file": str(python_file),
                 }
 
-        print(
-            "[SUCCESS] Python syntax check passed."
-        )
+        return {
+            "status": "SUCCESS",
+            "success": True,
+            "error_type": None,
+            "error": None,
+            "files_checked": len(python_files),
+        }
 
-        # -----------------------------------------------------
-        # Find main.py
-        # -----------------------------------------------------
+    # ============================================================
+    # JAVA
+    # ============================================================
 
-        main_file = (
-            self.repo_path / "main.py"
-        )
+    def _check_java_build(
+        self,
+        project_path,
+    ):
+        pom_file = project_path / "pom.xml"
 
-        if not main_file.exists():
-
-            print(
-                "[INFO] main.py not found."
-            )
-
-            print(
-                "[SUCCESS] Python validation passed."
-            )
-
-            return {
-                "status": "PASSED",
-                "stdout": (
-                    "Python syntax validation passed."
-                ),
-                "stderr": ""
-            }
-
-        # -----------------------------------------------------
-        # Execute main.py
-        # -----------------------------------------------------
-
-        print(
-            "[INFO] Executing main.py..."
-        )
-
-        try:
-
-            process = subprocess.run(
+        if pom_file.exists():
+            result = self._run_command(
                 [
-                    sys.executable,
-                    str(main_file)
+                    "mvn",
+                    "test",
+                    "-DskipTests",
                 ],
-                cwd=str(self.repo_path),
-                capture_output=True,
-                text=True,
-                timeout=30
+                project_path,
+                timeout=1800,
             )
 
-        except subprocess.TimeoutExpired:
-
-            print(
-                "[ERROR] Python execution timed out."
-            )
-
-            return {
-                "status": "FAILED",
-                "error": (
-                    "Python program execution "
-                    "timed out after 30 seconds."
-                ),
-                "stdout": "",
-                "stderr": (
-                    "Execution timeout: main.py "
-                    "did not finish within 30 seconds."
-                )
-            }
-
-        except Exception as e:
-
-            return {
-                "status": "FAILED",
-                "error": str(e),
-                "stdout": "",
-                "stderr": str(e)
-            }
-
-        if process.returncode != 0:
-
-            print(
-                "[ERROR] Python runtime error detected."
-            )
-
-            print(
-                process.stderr
-            )
-
-            return {
-                "status": "FAILED",
-                "error": (
-                    "Python runtime execution failed."
-                ),
-                "stdout": process.stdout,
-                "stderr": process.stderr
-            }
-
-        print(
-            "[SUCCESS] main.py executed successfully."
-        )
-
-        return {
-            "status": "PASSED",
-            "stdout": process.stdout,
-            "stderr": process.stderr
-        }
-
-    # =========================================================
-    # SIMPLE JAVASCRIPT
-    # =========================================================
-
-    def _check_simple_js(self):
-
-        print(
-            "[INFO] Running simple JavaScript validation..."
-        )
-
-        js_files = []
-
-        for extension in (
-            "*.js",
-            "*.jsx"
-        ):
-
-            for file_path in self.repo_path.rglob(
-                extension
-            ):
-
-                if not file_path.is_file():
-                    continue
-
-                parts = file_path.parts
-
-                if "node_modules" in parts:
-                    continue
-
-                if ".next" in parts:
-                    continue
-
-                if "dist" in parts:
-                    continue
-
-                if "build" in parts:
-                    continue
-
-                js_files.append(
-                    file_path
-                )
-
-        if not js_files:
-
-            return {
-                "status": "FAILED",
-                "error": "No JavaScript files found.",
-                "stdout": "",
-                "stderr": ""
-            }
-
-        for file_path in js_files:
-
-            try:
-
-                process = subprocess.run(
-                    [
-                        "node",
-                        "--check",
-                        str(file_path)
-                    ],
-                    cwd=str(self.repo_path),
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-
-                if process.returncode != 0:
-
-                    print(
-                        f"[ERROR] JavaScript syntax "
-                        f"error: {file_path}"
-                    )
-
-                    return {
-                        "status": "FAILED",
-                        "error": (
-                            "JavaScript syntax error."
-                        ),
-                        "stdout": process.stdout,
-                        "stderr": process.stderr
-                    }
-
-            except Exception as e:
-
+            if not result["success"]:
                 return {
-                    "status": "FAILED",
-                    "error": str(e),
-                    "stdout": "",
-                    "stderr": str(e)
+                    "status": "FAILURE",
+                    "success": False,
+                    "error_type": "java_build_error",
+                    "error": self._format_command_error(
+                        result
+                    ),
                 }
 
-        print(
-            "[SUCCESS] JavaScript syntax "
-            "validation passed."
-        )
-
-        return {
-            "status": "PASSED",
-            "stdout": (
-                "JavaScript syntax validation passed."
-            ),
-            "stderr": ""
-        }
-
-    # =========================================================
-    # SIMPLE TYPESCRIPT
-    # =========================================================
-
-    def _check_simple_ts(self):
-
-        print(
-            "[INFO] Running simple TypeScript validation..."
-        )
-
-        if not shutil.which("tsc"):
-
             return {
-                "status": "FAILED",
-                "error": (
-                    "TypeScript compiler (tsc) "
-                    "is not installed."
-                ),
-                "stdout": "",
-                "stderr": ""
+                "status": "SUCCESS",
+                "success": True,
+                "error_type": None,
+                "error": None,
+                "build_system": "Maven",
             }
 
-        ts_files = []
+        gradle_files = [
+            project_path / "gradlew",
+            project_path / "gradlew.bat",
+            project_path / "build.gradle",
+            project_path / "build.gradle.kts",
+        ]
 
-        for extension in (
-            "*.ts",
-            "*.tsx"
+        if any(
+            path.exists()
+            for path in gradle_files
         ):
+            gradle_command = "gradlew.bat"
 
-            for file_path in self.repo_path.rglob(
-                extension
-            ):
+            if not (
+                project_path /
+                "gradlew.bat"
+            ).exists():
+                gradle_command = "gradle"
 
-                if not file_path.is_file():
-                    continue
-
-                parts = file_path.parts
-
-                if "node_modules" in parts:
-                    continue
-
-                if ".next" in parts:
-                    continue
-
-                if "dist" in parts:
-                    continue
-
-                if "build" in parts:
-                    continue
-
-                if file_path.name.endswith(
-                    ".d.ts"
-                ):
-                    continue
-
-                ts_files.append(
-                    file_path
-                )
-
-        if not ts_files:
-
-            return {
-                "status": "FAILED",
-                "error": "No TypeScript files found.",
-                "stdout": "",
-                "stderr": ""
-            }
-
-        for file_path in ts_files:
-
-            try:
-
-                process = subprocess.run(
-                    [
-                        "tsc",
-                        "--noEmit",
-                        str(file_path)
-                    ],
-                    cwd=str(self.repo_path),
-                    capture_output=True,
-                    text=True,
-                    timeout=60
-                )
-
-                if process.returncode != 0:
-
-                    print(
-                        f"[ERROR] TypeScript error: "
-                        f"{file_path}"
-                    )
-
-                    return {
-                        "status": "FAILED",
-                        "error": (
-                            "TypeScript validation failed."
-                        ),
-                        "stdout": process.stdout,
-                        "stderr": process.stderr
-                    }
-
-            except Exception as e:
-
-                return {
-                    "status": "FAILED",
-                    "error": str(e),
-                    "stdout": "",
-                    "stderr": str(e)
-                }
-
-        print(
-            "[SUCCESS] TypeScript validation passed."
-        )
-
-        return {
-            "status": "PASSED",
-            "stdout": (
-                "TypeScript validation passed."
-            ),
-            "stderr": ""
-        }
-
-    # =========================================================
-    # JAVA BUILD
-    # =========================================================
-
-    def _check_java_build(self):
-
-        print(
-            "[INFO] Running Java project build..."
-        )
-
-        pom_file = (
-            self.repo_path / "pom.xml"
-        )
-
-        gradle_file = (
-            self.repo_path / "build.gradle"
-        )
-
-        gradle_kts_file = (
-            self.repo_path / "build.gradle.kts"
-        )
-
-        try:
-
-            if pom_file.exists():
-
-                print(
-                    "[INFO] Maven project detected."
-                )
-
-                process = subprocess.run(
-                    [
-                        "mvn",
-                        "test"
-                    ],
-                    cwd=str(self.repo_path),
-                    capture_output=True,
-                    text=True,
-                    timeout=180
-                )
-
-            elif (
-                gradle_file.exists()
-                or gradle_kts_file.exists()
-            ):
-
-                print(
-                    "[INFO] Gradle project detected."
-                )
-
-                gradlew = (
-                    self.repo_path / "gradlew"
-                )
-
-                if gradlew.exists():
-
-                    command = [
-                        str(gradlew),
-                        "build"
-                    ]
-
-                elif shutil.which("gradle"):
-
-                    command = [
-                        "gradle",
-                        "build"
-                    ]
-
-                else:
-
-                    return {
-                        "status": "FAILED",
-                        "error": (
-                            "Gradle project detected "
-                            "but Gradle is unavailable."
-                        ),
-                        "stdout": "",
-                        "stderr": ""
-                    }
-
-                process = subprocess.run(
-                    command,
-                    cwd=str(self.repo_path),
-                    capture_output=True,
-                    text=True,
-                    timeout=180
-                )
-
-            else:
-
-                return self._check_simple_java()
-
-            if process.returncode == 0:
-
-                print(
-                    "[SUCCESS] Java build passed."
-                )
-
-                return {
-                    "status": "PASSED",
-                    "stdout": process.stdout,
-                    "stderr": process.stderr
-                }
-
-            print(
-                "[ERROR] Java build failed."
+            result = self._run_command(
+                [
+                    gradle_command,
+                    "build",
+                    "-x",
+                    "test",
+                ],
+                project_path,
+                timeout=1800,
             )
 
-            return {
-                "status": "FAILED",
-                "error": "Java build failed.",
-                "stdout": process.stdout,
-                "stderr": process.stderr
-            }
-
-        except subprocess.TimeoutExpired:
-
-            return {
-                "status": "FAILED",
-                "error": (
-                    "Java build timed out."
-                ),
-                "stdout": "",
-                "stderr": ""
-            }
-
-        except Exception as e:
+            if not result["success"]:
+                return {
+                    "status": "FAILURE",
+                    "success": False,
+                    "error_type": "java_build_error",
+                    "error": self._format_command_error(
+                        result
+                    ),
+                }
 
             return {
-                "status": "FAILED",
-                "error": str(e),
-                "stdout": "",
-                "stderr": str(e)
+                "status": "SUCCESS",
+                "success": True,
+                "error_type": None,
+                "error": None,
+                "build_system": "Gradle",
             }
 
-    # =========================================================
-    # SIMPLE JAVA
-    # =========================================================
-
-    def _check_simple_java(self):
-
-        print(
-            "[INFO] Running simple Java validation..."
+        java_files = list(
+            project_path.rglob("*.java")
         )
-
-        if not shutil.which("javac"):
-
-            return {
-                "status": "FAILED",
-                "error": (
-                    "Java compiler (javac) "
-                    "is not installed."
-                ),
-                "stdout": "",
-                "stderr": ""
-            }
-
-        java_files = []
-
-        for file_path in self.repo_path.rglob(
-            "*.java"
-        ):
-
-            if not file_path.is_file():
-                continue
-
-            parts = file_path.parts
-
-            if "node_modules" in parts:
-                continue
-
-            if "target" in parts:
-                continue
-
-            if "build" in parts:
-                continue
-
-            java_files.append(
-                file_path
-            )
 
         if not java_files:
-
             return {
-                "status": "FAILED",
-                "error": "No Java files found.",
-                "stdout": "",
-                "stderr": ""
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "java_files_not_found",
+                "error": "No Java source files found.",
             }
 
-        build_directory = (
-            self.repo_path / ".java_build"
-        )
-
-        build_directory.mkdir(
-            exist_ok=True
-        )
-
-        try:
-
-            command = [
+        result = self._run_command(
+            [
                 "javac",
-                "-d",
-                str(build_directory)
-            ]
+                *[
+                    str(path)
+                    for path in java_files
+                ],
+            ],
+            project_path,
+            timeout=900,
+        )
 
-            command.extend(
+        if not result["success"]:
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "java_compilation_error",
+                "error": self._format_command_error(
+                    result
+                ),
+            }
+
+        return {
+            "status": "SUCCESS",
+            "success": True,
+            "error_type": None,
+            "error": None,
+            "build_system": "javac",
+        }
+
+    # ============================================================
+    # GO
+    # ============================================================
+
+    def _check_go(
+        self,
+        project_path,
+    ):
+        go_mod = project_path / "go.mod"
+
+        if not go_mod.exists():
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "go_module_missing",
+                "error": "go.mod not found.",
+            }
+
+        result = self._run_command(
+            [
+                "go",
+                "build",
+                "./...",
+            ],
+            project_path,
+            timeout=1200,
+        )
+
+        if not result["success"]:
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "go_build_error",
+                "error": self._format_command_error(
+                    result
+                ),
+            }
+
+        return {
+            "status": "SUCCESS",
+            "success": True,
+            "error_type": None,
+            "error": None,
+        }
+
+    # ============================================================
+    # RUST
+    # ============================================================
+
+    def _check_rust(
+        self,
+        project_path,
+    ):
+        cargo_file = (
+            project_path /
+            "Cargo.toml"
+        )
+
+        if not cargo_file.exists():
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "cargo_manifest_missing",
+                "error": "Cargo.toml not found.",
+            }
+
+        result = self._run_command(
+            [
+                "cargo",
+                "check",
+            ],
+            project_path,
+            timeout=1200,
+        )
+
+        if not result["success"]:
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "rust_build_error",
+                "error": self._format_command_error(
+                    result
+                ),
+            }
+
+        return {
+            "status": "SUCCESS",
+            "success": True,
+            "error_type": None,
+            "error": None,
+        }
+
+    # ============================================================
+    # PHP
+    # ============================================================
+
+    def _check_php(
+        self,
+        project_path,
+    ):
+        php_files = list(
+            project_path.rglob("*.php")
+        )
+
+        if not php_files:
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "php_files_not_found",
+                "error": "No PHP files found.",
+            }
+
+        for php_file in php_files:
+            result = self._run_command(
                 [
-                    str(file_path)
-                    for file_path in java_files
-                ]
+                    "php",
+                    "-l",
+                    str(php_file),
+                ],
+                project_path,
+                timeout=300,
             )
 
-            process = subprocess.run(
-                command,
-                cwd=str(self.repo_path),
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
-
-            if process.returncode != 0:
-
-                print(
-                    "[ERROR] Java compilation failed."
-                )
-
+            if not result["success"]:
                 return {
-                    "status": "FAILED",
-                    "error": (
-                        "Java compilation failed."
+                    "status": "FAILURE",
+                    "success": False,
+                    "error_type": "php_syntax_error",
+                    "error": self._format_command_error(
+                        result
                     ),
-                    "stdout": process.stdout,
-                    "stderr": process.stderr
+                    "file": str(php_file),
                 }
 
-            print(
-                "[SUCCESS] Java compilation passed."
+        return {
+            "status": "SUCCESS",
+            "success": True,
+            "error_type": None,
+            "error": None,
+            "files_checked": len(php_files),
+        }
+
+    # ============================================================
+    # C / C++
+    # ============================================================
+
+    def _check_c_cpp(
+        self,
+        project_path,
+        language_id,
+    ):
+        cmake_file = (
+            project_path /
+            "CMakeLists.txt"
+        )
+
+        if cmake_file.exists():
+            build_dir = (
+                project_path /
+                ".acr_build"
             )
 
+            configure_result = self._run_command(
+                [
+                    "cmake",
+                    "-S",
+                    str(project_path),
+                    "-B",
+                    str(build_dir),
+                ],
+                project_path,
+                timeout=1200,
+            )
+
+            if not configure_result["success"]:
+                return {
+                    "status": "FAILURE",
+                    "success": False,
+                    "error_type": "cmake_configuration_error",
+                    "error": self._format_command_error(
+                        configure_result
+                    ),
+                }
+
+            build_result = self._run_command(
+                [
+                    "cmake",
+                    "--build",
+                    str(build_dir),
+                ],
+                project_path,
+                timeout=1200,
+            )
+
+            if not build_result["success"]:
+                return {
+                    "status": "FAILURE",
+                    "success": False,
+                    "error_type": "cpp_build_error",
+                    "error": self._format_command_error(
+                        build_result
+                    ),
+                }
+
             return {
-                "status": "PASSED",
-                "stdout": process.stdout,
-                "stderr": process.stderr
+                "status": "SUCCESS",
+                "success": True,
+                "error_type": None,
+                "error": None,
+                "build_system": "CMake",
             }
 
-        except subprocess.TimeoutExpired:
+        extension = (
+            "*.cpp"
+            if language_id == "cpp"
+            else "*.c"
+        )
 
+        source_files = list(
+            project_path.rglob(extension)
+        )
+
+        if not source_files:
             return {
-                "status": "FAILED",
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "source_files_not_found",
                 "error": (
-                    "Java compilation timed out."
+                    f"No {language_id} "
+                    "source files found."
                 ),
-                "stdout": "",
-                "stderr": ""
             }
 
-        except Exception as e:
+        compiler = (
+            "g++"
+            if language_id == "cpp"
+            else "gcc"
+        )
 
+        output_file = (
+            project_path /
+            ".acr_build_output"
+        )
+
+        result = self._run_command(
+            [
+                compiler,
+                *[
+                    str(path)
+                    for path in source_files
+                ],
+                "-o",
+                str(output_file),
+            ],
+            project_path,
+            timeout=900,
+        )
+
+        if not result["success"]:
             return {
-                "status": "FAILED",
-                "error": str(e),
-                "stdout": "",
-                "stderr": str(e)
+                "status": "FAILURE",
+                "success": False,
+                "error_type": (
+                    f"{language_id}_"
+                    "compilation_error"
+                ),
+                "error": self._format_command_error(
+                    result
+                ),
             }
+
+        return {
+            "status": "SUCCESS",
+            "success": True,
+            "error_type": None,
+            "error": None,
+            "compiler": compiler,
+        }
+
+    # ============================================================
+    # C#
+    # ============================================================
+
+    def _check_csharp(
+        self,
+        project_path,
+    ):
+        project_files = list(
+            project_path.rglob("*.csproj")
+        )
+
+        if not project_files:
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "csharp_project_missing",
+                "error": "No .csproj file found.",
+            }
+
+        result = self._run_command(
+            [
+                "dotnet",
+                "build",
+                "--no-restore",
+            ],
+            project_path,
+            timeout=1800,
+        )
+
+        if not result["success"]:
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "csharp_build_error",
+                "error": self._format_command_error(
+                    result
+                ),
+            }
+
+        return {
+            "status": "SUCCESS",
+            "success": True,
+            "error_type": None,
+            "error": None,
+        }
+
+    # ============================================================
+    # UNKNOWN
+    # ============================================================
+
+    def _check_unknown(
+        self,
+        project_path,
+    ):
+        files = [
+            path
+            for path in project_path.rglob("*")
+            if path.is_file()
+            and "node_modules" not in path.parts
+            and ".git" not in path.parts
+            and "__pycache__" not in path.parts
+        ]
+
+        if not files:
+            return {
+                "status": "FAILURE",
+                "success": False,
+                "error_type": "empty_project",
+                "error": "No project files found.",
+            }
+
+        return {
+            "status": "SUCCESS",
+            "success": True,
+            "error_type": None,
+            "error": None,
+            "message": (
+                "Project detected but no "
+                "specialized build system "
+                "was identified."
+            ),
+        }
